@@ -1,0 +1,33 @@
+const $=s=>document.querySelector(s);
+let file=null,result=null,operation="auto_enhance",histogramChart=null,metricsChart=null;
+const names={auto_enhance:"Auto Enhance",grayscale:"Grayscale",contrast:"Contrast",brightness:"Brightness",median:"Median Filter",sharpen:"Sharpen",edges:"Edge Detection",threshold:"Otsu Threshold"};
+const desc={auto_enhance:["Enhancement strength","Automatic contrast stretching is applied."],grayscale:["Strength not required","Converts the image to grayscale intensity."],contrast:["Contrast strength","Adjust difference between light and dark."],brightness:["Brightness strength","Adjust overall light level."],median:["Noise reduction strength","Larger kernels remove more noise and detail."],sharpen:["Sharpening strength","Emphasize edges and fine detail."],edges:["Strength not required","Highlights intensity boundaries."],threshold:["Strength not required","Otsu chooses a threshold from the histogram."]};
+function msg(t,ok=false){$("#message").textContent=t;$("#message").style.color=ok?"#27956e":"#c14d5a"}
+function clearGraphs(){if(histogramChart){histogramChart.destroy();histogramChart=null}if(metricsChart){metricsChart.destroy();metricsChart=null}}
+function drawGraphs(d){
+ if(typeof Chart==="undefined"){msg("Image processed, but graphs could not load. Check your internet connection.",true);return}
+ clearGraphs();
+ const labels=Array.from({length:256},(_,i)=>i);
+ histogramChart=new Chart($("#histogramChart"),{type:"line",data:{labels,datasets:[
+ {label:"Original",data:d.original_histogram,borderColor:"#8b8fa3",backgroundColor:"rgba(139,143,163,.08)",borderWidth:1.5,pointRadius:0,tension:.15},
+ {label:"Processed",data:d.result_histogram,borderColor:"#6d5ce8",backgroundColor:"rgba(109,92,232,.08)",borderWidth:1.7,pointRadius:0,tension:.15}
+ ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{x:{title:{display:true,text:"Grayscale intensity"},ticks:{maxTicksLimit:9}},y:{beginAtZero:true,title:{display:true,text:"Pixel count"}}}}});
+ metricsChart=new Chart($("#metricsChart"),{type:"bar",data:{labels:["Mean brightness","Intensity variation"],datasets:[
+ {label:"Original",data:[d.original_brightness,d.original_contrast],backgroundColor:"#a7a9b7",borderRadius:5},
+ {label:"Processed",data:[d.brightness,d.contrast],backgroundColor:"#6d5ce8",borderRadius:5}
+ ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom"}},scales:{y:{beginAtZero:true,max:255,title:{display:true,text:"Intensity value"}}}}});
+}
+function chooseOp(op){operation=op;document.querySelectorAll(".tool").forEach(b=>b.classList.toggle("selected",b.dataset.op===op));$("#selectedLabel").textContent=names[op]+" selected";$("#strengthTitle").textContent=desc[op][0];$("#strengthDesc").textContent=desc[op][1];$("#strength").disabled=["auto_enhance","grayscale","edges","threshold"].includes(op);msg("")}
+document.querySelectorAll(".tool").forEach(b=>b.addEventListener("click",()=>chooseOp(b.dataset.op)));
+$("#strength").addEventListener("input",()=>$("#strengthValue").textContent=$("#strength").value+" / 9");
+function loadFile(f){if(!f)return;if(!["image/png","image/jpeg","image/webp"].includes(f.type))return msg("Choose a PNG, JPG or WEBP image.");if(f.size>8*1024*1024)return msg("Image must be smaller than 8 MB.");file=f;result=null;clearGraphs();$("#fileName").textContent=f.name;$("#originalStage").innerHTML="";let img=document.createElement("img");img.src=URL.createObjectURL(f);img.alt="Original image";$("#originalStage").append(img);$("#originalMeta").textContent=f.name+" · "+(f.size/1024).toFixed(1)+" KB";$("#resultStage").innerHTML='<div class="empty">✧<b>Your result will appear here</b><small>Select a method and process</small></div>';$("#resultMeta").textContent="No result yet";$("#resultBadge").textContent="NOT PROCESSED";$("#processButton").disabled=false;$("#downloadButton").disabled=true;$("#resetButton").disabled=true;["dimensionMetric","brightnessMetric","contrastMetric","timeMetric"].forEach(id=>$("#"+id).textContent="—");msg("")}
+$("#fileInput").addEventListener("change",e=>loadFile(e.target.files[0]));
+$("#dropZone").addEventListener("click",()=>$("#fileInput").click());
+$("#dropZone").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" ")$("#fileInput").click()});
+["dragenter","dragover"].forEach(ev=>$("#dropZone").addEventListener(ev,e=>{e.preventDefault();$("#dropZone").classList.add("drag")}));
+["dragleave","drop"].forEach(ev=>$("#dropZone").addEventListener(ev,e=>{e.preventDefault();$("#dropZone").classList.remove("drag")}));
+$("#dropZone").addEventListener("drop",e=>loadFile(e.dataTransfer.files[0]));
+$("#processButton").addEventListener("click",async()=>{if(!file)return;const btn=$("#processButton");btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Processing…';const form=new FormData();form.append("image",file);form.append("operation",operation);form.append("strength",$("#strength").value);try{const r=await fetch("/api/process",{method:"POST",body:form});const d=await r.json();if(!r.ok)throw Error(d.error||"Processing failed.");result=d;$("#resultStage").innerHTML="";const img=document.createElement("img");img.src=d.image;img.alt="Processed image";$("#resultStage").append(img);$("#resultMeta").textContent=names[operation]+" · PNG · "+(d.output_bytes/1024).toFixed(1)+" KB";$("#resultBadge").textContent="COMPLETE";$("#dimensionMetric").textContent=d.width+" × "+d.height;$("#brightnessMetric").textContent=d.brightness;$("#contrastMetric").textContent=d.contrast;$("#timeMetric").textContent=d.processing_ms+" ms";$("#downloadButton").disabled=false;$("#resetButton").disabled=false;drawGraphs(d);msg("Image processed successfully.",true)}catch(e){msg(e.message||"Could not reach API.")}finally{btn.disabled=!file;btn.textContent="Process image →"}});
+$("#downloadButton").addEventListener("click",()=>{if(!result)return;const a=document.createElement("a");a.href=result.image;a.download="imagerevive-"+operation+".png";a.click()});
+$("#resetButton").addEventListener("click",()=>{result=null;clearGraphs();$("#resultStage").innerHTML='<div class="empty">✧<b>Your result will appear here</b><small>Select a method and process</small></div>';$("#resultMeta").textContent="No result yet";$("#resultBadge").textContent="NOT PROCESSED";$("#downloadButton").disabled=true;$("#resetButton").disabled=true;["dimensionMetric","brightnessMetric","contrastMetric","timeMetric"].forEach(id=>$("#"+id).textContent="—");msg("")});
+chooseOp("auto_enhance");fetch("/health").then(r=>{if(!r.ok)throw Error();return r.json()}).then(()=>$("#apiStatus").textContent="online").catch(()=>$("#apiStatus").textContent="offline");
